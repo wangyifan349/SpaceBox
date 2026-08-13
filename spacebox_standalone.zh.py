@@ -417,7 +417,9 @@ EMBEDDED_TEMPLATES: dict[str, str] = {
 
       <div class="mb-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
-          <label class="form-label mb-0 fw-semibold">内容</label>
+          <label class="form-label mb-0 fw-semibold">
+            内容 <span class="fw-normal text-secondary">（可选）</span>
+          </label>
           <span id="post-char-count" class="small text-secondary"></span>
         </div>
         <textarea
@@ -427,7 +429,7 @@ EMBEDDED_TEMPLATES: dict[str, str] = {
           maxlength="5000"
           data-indentable
           data-count-target="post-char-count"
-          placeholder="分享点什么……&#10;&#10;提示：在这里按 Tab 会插入缩进，而不是移动焦点。"
+          placeholder="分享点什么……（可选，可只上传图片或视频）&#10;&#10;提示：在这里按 Tab 会插入缩进，而不是移动焦点。"
         ></textarea>
       </div>
 
@@ -1979,7 +1981,23 @@ APPLICATION_JAVASCRIPT_TEMPLATE = r"""(() => {
         }
 
         setUploadState(uploadForm, false);
-        uploadStatus.text.textContent = `上传失败（HTTP ${uploadRequest.status}），请重试。`;
+        let serverDetail = "";
+        try {
+          const responseData = JSON.parse(uploadRequest.responseText || "{}");
+          if (typeof responseData.detail === "string") {
+            serverDetail = responseData.detail;
+          } else if (Array.isArray(responseData.detail)) {
+            serverDetail = responseData.detail
+              .map((item) => item && item.msg)
+              .filter(Boolean)
+              .join("；");
+          }
+        } catch (_error) {
+          // 非 JSON 错误响应保留通用提示。
+        }
+        uploadStatus.text.textContent = serverDetail
+          ? `上传失败（HTTP ${uploadRequest.status}）：${serverDetail}`
+          : `上传失败（HTTP ${uploadRequest.status}），请重试。`;
       });
       uploadRequest.addEventListener("error", function handleUploadError() {
         setUploadState(uploadForm, false);
@@ -3353,14 +3371,14 @@ class PostDraft:
 
 def build_post_draft(
     *,
-    content: str,
+    content: str | None,
     visibility: str,
     scheduled_at_utc: str | None,
     current_user: User,
     upload_count: int,
 ) -> PostDraft:
     """集中校验发帖表单，路由只负责协调认证、存储与响应。"""
-    normalized_content = normalize_line_endings(content)
+    normalized_content = normalize_line_endings(content or "")
     if not normalized_content.strip() and upload_count == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3755,9 +3773,9 @@ def new_post_form(
 @app.post("/post/new", name="create_post")
 async def create_post(
     request: Request,
-    content: Annotated[str, Form()],
     visibility: Annotated[str, Form()],
     csrf: Annotated[str, Form()],
+    content: Annotated[str | None, Form()] = None,
     scheduled_at_utc: Annotated[str | None, Form()] = None,
     files: list[UploadFile] | None = File(default=None),
     session: Session = Depends(get_database_session),
